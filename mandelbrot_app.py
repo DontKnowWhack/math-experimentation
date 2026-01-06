@@ -5,12 +5,9 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 from tkinter import Tk, Canvas, NW, BOTH
 
-
 import numpy as np
 from PIL import Image, ImageTk
 from matplotlib import cm
-from matplotlib.pyplot import colormaps
-
 
 # Try to import Numba; gracefully fall back to pure NumPy
 try:
@@ -22,100 +19,9 @@ except ImportError:
     HAS_CUDA = False
 
 
-
-# ============================================================================
-# LINKED LIST COLORMAP NAVIGATOR
-# ============================================================================
-
-
-class ColormapNode:
-    """Node in a doubly-linked list of colormaps."""
-    def __init__(self, name: str):
-        self.name = name
-        self.prev: Optional['ColormapNode'] = None
-        self.next: Optional['ColormapNode'] = None
-
-
-class ColormapLinkedList:
-    """Doubly-linked list for navigating colormaps with prev/next."""
-    def __init__(self, colormap_names: list, start_index: int = 0):
-        self.head = None
-        self.current = None
-        
-        # Build linked list from colormap names
-        for name in colormap_names:
-            node = ColormapNode(name)
-            if self.head is None:
-                self.head = node
-                self.current = node
-            else:
-                # Find tail and append
-                tail = self.head
-                while tail.next:
-                    tail = tail.next
-                tail.next = node
-                node.prev = tail
-        
-        # Set current to start_index
-        if self.head:
-            current_node = self.head
-            for _ in range(min(start_index, self._count() - 1)):
-                if current_node.next:
-                    current_node = current_node.next
-            self.current = current_node
-    
-    def _count(self) -> int:
-        """Count total nodes."""
-        count = 0
-        node = self.head
-        while node:
-            count += 1
-            node = node.next
-        return count
-    
-    def get_current(self) -> str:
-        """Get current colormap name."""
-        return self.current.name if self.current else "hot"
-    
-    def next(self) -> str:
-        """Move to next colormap (circular)."""
-        if self.current and self.current.next:
-            self.current = self.current.next
-        elif self.current:
-            # Wrap around to head
-            self.current = self.head
-        return self.get_current()
-    
-    def prev(self) -> str:
-        """Move to previous colormap (circular)."""
-        if self.current and self.current.prev:
-            self.current = self.current.prev
-        elif self.current:
-            # Wrap around to tail
-            tail = self.current
-            while tail.next:
-                tail = tail.next
-            self.current = tail
-        return self.get_current()
-    
-    def get_index(self) -> int:
-        """Get current index in the list."""
-        index = 0
-        node = self.head
-        while node and node != self.current:
-            index += 1
-            node = node.next
-        return index
-    
-    def get_total_count(self) -> int:
-        """Get total number of colormaps."""
-        return self._count()
-
-
 # ============================================================================
 # DATA STRUCTURES
 # ============================================================================
-
 
 @dataclass
 class ComplexBounds:
@@ -124,25 +30,21 @@ class ComplexBounds:
     ymin: float
     ymax: float
 
-
     def get_center(self) -> Tuple[float, float]:
         cx = (self.xmin + self.xmax) / 2
         cy = (self.ymin + self.ymax) / 2
         return cx, cy
-
 
     def get_width_height(self) -> Tuple[float, float]:
         w = self.xmax - self.xmin
         h = self.ymax - self.ymin
         return w, h
 
-
     def get_zoom_level(self) -> float:
         w, _ = self.get_width_height()
         initial_width = 3.0
         zoom = np.log2(initial_width / w) if w > 0 else 0
         return max(0, zoom)
-
 
     def zoom_to_rect(
         self,
@@ -158,15 +60,12 @@ class ComplexBounds:
         ymin_pix = min(y0, y1)
         ymax_pix = max(y0, y1)
 
-
         xmin_new = self.xmin + (xmin_pix / canvas_w) * (self.xmax - self.xmin)
         xmax_new = self.xmin + (xmax_pix / canvas_w) * (self.xmax - self.xmin)
         ymin_new = self.ymin + (ymin_pix / canvas_h) * (self.ymax - self.ymin)
         ymax_new = self.ymin + (ymax_pix / canvas_h) * (self.ymax - self.ymin)
 
-
         return ComplexBounds(xmin_new, xmax_new, ymin_new, ymax_new)
-
 
     def zoom_out(self, cx: float, cy: float, scale: float = 2.0) -> "ComplexBounds":
         w, h = self.get_width_height()
@@ -174,17 +73,14 @@ class ComplexBounds:
         half_h = h * 0.5 * scale
         return ComplexBounds(cx - half_w, cx + half_w, cy - half_h, cy + half_h)
 
-
     def adjust_to_aspect_ratio(
         self, canvas_w: float, canvas_h: float
     ) -> "ComplexBounds":
         cx, cy = self.get_center()
         w, h = self.get_width_height()
 
-
         canvas_aspect = canvas_w / canvas_h if canvas_h > 0 else 1.0
         current_aspect = w / h if h > 0 else 1.0
-
 
         if canvas_aspect > current_aspect:
             new_w = h * canvas_aspect
@@ -193,28 +89,23 @@ class ComplexBounds:
             new_w = w
             new_h = w / canvas_aspect
 
-
         new_xmin = cx - new_w / 2
         new_xmax = cx + new_w / 2
         new_ymin = cy - new_h / 2
         new_ymax = cy + new_h / 2
 
-
         return ComplexBounds(new_xmin, new_xmax, new_ymin, new_ymax)
-
 
 
 # ============================================================================
 # ADAPTIVE ITERATION & RESOLUTION
 # ============================================================================
 
-
 def calculate_adaptive_iterations(zoom_level: float) -> int:
     base_iterations = 100
     slope = 30
     max_iters = int(base_iterations + slope * zoom_level)
     return max(50, min(max_iters, 5000))
-
 
 
 def calculate_adaptive_resolution(
@@ -227,17 +118,14 @@ def calculate_adaptive_resolution(
     else:
         scale = 0.5
 
-
     width = max(200, int(base_width * scale))
     height = max(150, int(base_height * scale))
     return width, height
 
 
-
 # ============================================================================
 # COMPUTATION - NUMPY / NUMBA / CUDA
 # ============================================================================
-
 
 def mandelbrot_numpy(
     bounds: ComplexBounds,
@@ -251,23 +139,19 @@ def mandelbrot_numpy(
     X, Y = np.meshgrid(x, y)
     c = X + 1j * Y
 
-
     z = np.zeros_like(c, dtype=np.complex128)
     counts = np.zeros(c.shape, dtype=np.float32)
     escaped = np.zeros(c.shape, dtype=bool)
     bound_sq = 4.0
-
 
     for i in range(1, max_iterations + 1):
         not_escaped = ~escaped
         if not np.any(not_escaped):
             break
 
-
         z[not_escaped] = z[not_escaped] ** 2 + c[not_escaped]
         mag_sq = z.real * z.real + z.imag * z.imag
         newly_escaped = (mag_sq >= bound_sq) & (~escaped)
-
 
         if smooth_coloring and np.any(newly_escaped):
             mag = np.sqrt(mag_sq[newly_escaped])
@@ -276,12 +160,9 @@ def mandelbrot_numpy(
         else:
             counts[newly_escaped] = i
 
-
         escaped |= newly_escaped
 
-
     return counts
-
 
 
 if HAS_NUMBA:
@@ -301,24 +182,20 @@ if HAS_NUMBA:
         dy = (ymax - ymin) / ny
         log2 = np.log(2.0)
 
-
         for py in range(ny):
             y_val = ymin + py * dy
             for px in range(nx):
                 x_val = xmin + px * dx
-
 
                 z_real = 0.0
                 z_imag = 0.0
                 c_real = x_val
                 c_imag = y_val
 
-
                 for i in range(1, max_iterations + 1):
                     z_real_sq = z_real * z_real
                     z_imag_sq = z_imag * z_imag
                     mag_sq = z_real_sq + z_imag_sq
-
 
                     if mag_sq >= 4.0:
                         if smooth_coloring:
@@ -329,15 +206,12 @@ if HAS_NUMBA:
                             counts[py, px] = float(i)
                         break
 
-
                     z_imag = 2.0 * z_real * z_imag + c_imag
                     z_real = z_real_sq - z_imag_sq + c_real
                 else:
                     counts[py, px] = float(max_iterations)
 
-
         return counts
-
 
 
 if HAS_CUDA:
@@ -352,31 +226,26 @@ if HAS_CUDA:
         max_iterations: int,
         counts: np.ndarray,
     ) -> None:
-        # px is x (column), py is y (row); match counts[py, px]
+        # px is x (column), py is y (row); match counts[py, px] [web:19]
         px, py = numba_cuda.grid(2)
-
 
         if px < nx and py < ny:
             dx = (xmax - xmin) / nx
             dy = (ymax - ymin) / ny
             log2 = math.log(2.0)
 
-
             x_val = xmin + px * dx
             y_val = ymin + py * dy
-
 
             z_real = 0.0
             z_imag = 0.0
             c_real = x_val
             c_imag = y_val
 
-
             for i in range(1, max_iterations + 1):
                 z_real_sq = z_real * z_real
                 z_imag_sq = z_imag * z_imag
                 mag_sq = z_real_sq + z_imag_sq
-
 
                 if mag_sq >= 4.0:
                     mag = math.sqrt(mag_sq)
@@ -384,13 +253,10 @@ if HAS_CUDA:
                     counts[py, px] = smooth_iter
                     return
 
-
                 z_imag = 2.0 * z_real * z_imag + c_imag
                 z_real = z_real_sq - z_imag_sq + c_real
 
-
             counts[py, px] = float(max_iterations)
-
 
 
 def mandelbrot_cuda_wrapper(
@@ -399,17 +265,15 @@ def mandelbrot_cuda_wrapper(
     ny: int,
     max_iterations: int,
 ) -> np.ndarray:
+    # counts is (ny, nx) = (height, width)
     counts = np.zeros((ny, nx), dtype=np.float32)
 
-
-    blockdim = (16, 16)
+    blockdim = (16, 16)  # (threads_x, threads_y)
     blocks_x = (nx + blockdim[0] - 1) // blockdim[0]
     blocks_y = (ny + blockdim[1] - 1) // blockdim[1]
     griddim = (blocks_x, blocks_y)
 
-
     d_counts = numba_cuda.to_device(counts)
-
 
     mandelbrot_cuda[griddim, blockdim](
         bounds.xmin, bounds.xmax,
@@ -417,10 +281,8 @@ def mandelbrot_cuda_wrapper(
         nx, ny, max_iterations, d_counts
     )
 
-
     d_counts.copy_to_host(counts)
     return counts
-
 
 
 def mandelbrot(
@@ -442,7 +304,6 @@ def mandelbrot(
         return mandelbrot_numpy(bounds, nx, ny, max_iterations, smooth_coloring)
 
 
-
 def render_image(
     counts: np.ndarray,
     colormap_name: str = "hot",
@@ -452,26 +313,20 @@ def render_image(
     maxc = norm.max() if norm.max() > 0 else 1.0
     norm = np.clip(norm / maxc, 0.0, 1.0)
 
-
     cmap = cm.get_cmap(colormap_name)
     rgba = (cmap(norm) * 255).astype(np.uint8)
 
-
     img = Image.fromarray(rgba, mode="RGBA")
-
 
     if target_size and img.size != target_size:
         img = img.resize(target_size, resample=Image.BICUBIC)
 
-
     return img
-
 
 
 # ============================================================================
 # GUI APPLICATION
 # ============================================================================
-
 
 class MandelApp:
     MAX_RENDER_WIDTH = 2560
@@ -480,56 +335,41 @@ class MandelApp:
     SMOOTH_COLORING = True
     ENABLE_ADAPTIVE_RESOLUTION = True
 
-
     def __init__(self, width: int = 1000, height: int = 700, use_gpu: bool = False):
         self.root = Tk()
         self.root.title("Mandelbrot Zoom Viewer (CUDA‑fixed)")
         self.root.geometry(f"{width}x{height}")
 
-
         self.width = width
         self.height = height
         self.use_gpu = use_gpu and HAS_CUDA
-
 
         self.canvas = Canvas(
             self.root, width=self.width, height=self.height, bg="black"
         )
         self.canvas.pack(fill=BOTH, expand=True)
 
-
         self.bounds = ComplexBounds(xmin=-2.0, xmax=1.0, ymin=-1.2, ymax=1.2)
         self.bounds = self.bounds.adjust_to_aspect_ratio(self.width, self.height)
 
-
-        # Initialize colormap linked list
-        all_colormaps = sorted(list(colormaps()))
-        default_index = all_colormaps.index(self.DEFAULT_COLORMAP) if self.DEFAULT_COLORMAP in all_colormaps else 0
-        self.colormap_list = ColormapLinkedList(all_colormaps, start_index=default_index)
-        self.colormap = self.colormap_list.get_current()
-        
+        self.colormap = self.DEFAULT_COLORMAP
         self.last_detailed_zoom = 0.0
-
 
         self._drag_start: Optional[Tuple[int, int]] = None
         self._rect_id: Optional[int] = None
         self.image_id: Optional[int] = None
-        self.photo_image: Optional[Image.Image] = None
-
+        self.photo_image: Optional[ImageTk.PhotoImage] = None
 
         self._compute_lock = threading.Lock()
         self._render_thread: Optional[threading.Thread] = None
         self._should_stop = False
         self._resize_after_id: Optional[str] = None
 
-
         self.last_render_time = 0.0
         self.last_iterations = 0
         self.last_render_resolution = (0, 0)
 
-
         self._bind_events()
-
 
         backend = (
             "CUDA GPU"
@@ -543,19 +383,8 @@ class MandelApp:
             features.append("adaptive resolution")
         feature_str = f" ({', '.join(features)})" if features else ""
         print(f"Using backend: {backend}{feature_str}")
-        print(f"Available colormaps: {self.colormap_list.get_total_count()}")
-        print(f"Controls:")
-        print(f"  ← → arrow keys: cycle colormaps")
-        print(f"  Left-click-drag: zoom to region")
-        print(f"  Right-click: zoom out")
-        print(f"  Scroll wheel: zoom in/out")
-        print(f"  R: reset view")
-        print(f"  G: toggle GPU")
-        print(f"  Q: quit")
-
 
         self.render()
-
 
     def _bind_events(self) -> None:
         self.canvas.bind("<ButtonPress-1>", self.on_button_press)
@@ -568,28 +397,8 @@ class MandelApp:
         self.root.bind("<Button-5>", self.on_scroll)
         self.root.bind("<r>", self.on_reset)
         self.root.bind("<q>", self.on_quit)
-        self.root.bind("<Left>", self.on_prev_colormap)
-        self.root.bind("<Right>", self.on_next_colormap)
+        # Optional: toggle GPU with 'g'
         self.root.bind("<g>", self.on_toggle_gpu)
-
-
-    def on_prev_colormap(self, event=None) -> None:
-        """Switch to previous colormap (left arrow)."""
-        self.colormap = self.colormap_list.prev()
-        idx = self.colormap_list.get_index() + 1
-        total = self.colormap_list.get_total_count()
-        print(f"Colormap: {self.colormap} ({idx}/{total})")
-        self.render()
-
-
-    def on_next_colormap(self, event=None) -> None:
-        """Switch to next colormap (right arrow)."""
-        self.colormap = self.colormap_list.next()
-        idx = self.colormap_list.get_index() + 1
-        total = self.colormap_list.get_total_count()
-        print(f"Colormap: {self.colormap} ({idx}/{total})")
-        self.render()
-
 
     def on_toggle_gpu(self, event=None) -> None:
         if not HAS_CUDA:
@@ -599,26 +408,21 @@ class MandelApp:
         print("GPU enabled" if self.use_gpu else "GPU disabled")
         self.render()
 
-
     def on_resize(self, event: object) -> None:
         w = max(10, event.width)
         h = max(10, event.height)
         if w == self.width and h == self.height:
             return
 
-
         self.width = w
         self.height = h
         self.canvas.config(width=self.width, height=self.height)
 
-
         self.bounds = self.bounds.adjust_to_aspect_ratio(self.width, self.height)
-
 
         if self._resize_after_id is not None:
             self.root.after_cancel(self._resize_after_id)
         self._resize_after_id = self.root.after(100, self.render)
-
 
     def on_button_press(self, event: object) -> None:
         self._drag_start = (event.x, event.y)
@@ -626,13 +430,11 @@ class MandelApp:
             self.canvas.delete(self._rect_id)
             self._rect_id = None
 
-
     def on_drag(self, event: object) -> None:
         if not self._drag_start:
             return
         x0, y0 = self._drag_start
         x1, y1 = event.x, event.y
-
 
         if self._rect_id:
             self.canvas.coords(self._rect_id, x0, y0, x1, y1)
@@ -641,29 +443,23 @@ class MandelApp:
                 x0, y0, x1, y1, outline="white", width=2
             )
 
-
     def on_button_release(self, event: object) -> None:
         if not self._drag_start:
             return
-
 
         x0, y0 = self._drag_start
         x1, y1 = event.x, event.y
         self._drag_start = None
 
-
         if self._rect_id:
             self.canvas.delete(self._rect_id)
             self._rect_id = None
 
-
         if abs(x1 - x0) < 5 or abs(y1 - y0) < 5:
             return
 
-
         canvas_w = max(10, self.canvas.winfo_width())
         canvas_h = max(10, self.canvas.winfo_height())
-
 
         new_bounds = self.bounds.zoom_to_rect(
             x0, y0, x1, y1, canvas_w, canvas_h
@@ -671,11 +467,9 @@ class MandelApp:
         self.bounds = new_bounds.adjust_to_aspect_ratio(canvas_w, canvas_h)
         self.render()
 
-
     def on_right_click(self, event: object) -> None:
         canvas_w = max(10, self.canvas.winfo_width())
         canvas_h = max(10, self.canvas.winfo_height())
-
 
         cx = self.bounds.xmin + (event.x / canvas_w) * (
             self.bounds.xmax - self.bounds.xmin
@@ -687,11 +481,9 @@ class MandelApp:
         self.bounds = new_bounds.adjust_to_aspect_ratio(canvas_w, canvas_h)
         self.render()
 
-
     def on_scroll(self, event: object) -> None:
         canvas_w = max(10, self.canvas.winfo_width())
         canvas_h = max(10, self.canvas.winfo_height())
-
 
         cx = self.bounds.xmin + (event.x / canvas_w) * (
             self.bounds.xmax - self.bounds.xmin
@@ -700,43 +492,34 @@ class MandelApp:
             self.bounds.ymax - self.bounds.ymin
         )
 
-
         scale = 0.5 if getattr(event, "delta", 0) > 0 else 2.0
         if hasattr(event, "num"):
             scale = 0.5 if event.num == 4 else 2.0
-
 
         new_bounds = self.bounds.zoom_out(cx, cy, scale=scale)
         self.bounds = new_bounds.adjust_to_aspect_ratio(canvas_w, canvas_h)
         self.render()
 
-
     def on_reset(self, event: object) -> None:
         canvas_w = max(10, self.canvas.winfo_width())
         canvas_h = max(10, self.canvas.winfo_height())
-
 
         self.bounds = ComplexBounds(xmin=-2.0, xmax=1.0, ymin=-1.2, ymax=1.2)
         self.bounds = self.bounds.adjust_to_aspect_ratio(canvas_w, canvas_h)
         self.last_detailed_zoom = 0.0
         self.render()
 
-
     def on_quit(self, event: object) -> None:
         self._should_stop = True
         self.root.quit()
 
-
     def render(self) -> None:
         self._should_stop = False
-
 
         canvas_w = max(10, self.canvas.winfo_width())
         canvas_h = max(10, self.canvas.winfo_height())
 
-
         zoom_level = self.bounds.get_zoom_level()
-
 
         if self.ENABLE_ADAPTIVE_RESOLUTION:
             render_width, render_height = calculate_adaptive_resolution(
@@ -746,7 +529,6 @@ class MandelApp:
             render_width = min(canvas_w, self.MAX_RENDER_WIDTH)
             render_height = min(canvas_h, self.MAX_RENDER_HEIGHT)
 
-
         thread = threading.Thread(
             target=self._render_job,
             args=(render_width, render_height, zoom_level, canvas_w, canvas_h),
@@ -754,7 +536,6 @@ class MandelApp:
         )
         self._render_thread = thread
         thread.start()
-
 
     def _render_job(
         self,
@@ -768,9 +549,7 @@ class MandelApp:
             with self._compute_lock:
                 start_time = time.time()
 
-
                 max_iterations = calculate_adaptive_iterations(zoom_level)
-
 
                 counts = mandelbrot(
                     bounds=self.bounds,
@@ -781,23 +560,19 @@ class MandelApp:
                     smooth_coloring=self.SMOOTH_COLORING,
                 )
 
-
                 img = render_image(
                     counts,
                     colormap_name=self.colormap,
                     target_size=(canvas_w, canvas_h),
                 )
 
-
                 photo = ImageTk.PhotoImage(img)
                 elapsed = time.time() - start_time
-
 
                 self.last_render_time = elapsed
                 self.last_iterations = max_iterations
                 self.last_render_resolution = (render_width, render_height)
                 self.last_detailed_zoom = max(self.last_detailed_zoom, zoom_level)
-
 
                 def update_ui() -> None:
                     if self._should_stop:
@@ -810,17 +585,11 @@ class MandelApp:
                     else:
                         self.canvas.itemconfig(self.image_id, image=self.photo_image)
 
-
                     zoom_level_now = self.bounds.get_zoom_level()
                     res_str = f"{self.last_render_resolution[0]}×{self.last_render_resolution[1]}"
 
-
                     if zoom_level_now > 50 and self.ENABLE_ADAPTIVE_RESOLUTION:
                         res_str += " (adaptive)"
-
-                    
-                    colormap_index = self.colormap_list.get_index() + 1
-                    colormap_total = self.colormap_list.get_total_count()
 
                     self.root.title(
                         f"Mandelbrot | "
@@ -828,33 +597,26 @@ class MandelApp:
                         f"Iters: {self.last_iterations} | "
                         f"Res: {res_str} | "
                         f"Time: {elapsed:.2f}s | "
-                        f"GPU: {self.use_gpu} | "
-                        f"Colormap: {self.colormap} ({colormap_index}/{colormap_total})"
+                        f"GPU: {self.use_gpu}"
                     )
 
-
                 self.root.after(0, update_ui)
-
 
         except Exception as e:
             print(f"Render error: {e}")
             import traceback
             traceback.print_exc()
 
-
     def run(self) -> None:
         self.root.mainloop()
-
 
 
 # ============================================================================
 # ENTRY POINT
 # ============================================================================
 
-
 if __name__ == "__main__":
     use_gpu = HAS_CUDA
-
 
     if use_gpu:
         print("CUDA GPU available - using GPU acceleration")
@@ -863,7 +625,6 @@ if __name__ == "__main__":
     else:
         print("Numba not installed - using pure NumPy (slow)")
         print("Install with: pip install numba")
-
 
     app = MandelApp(1000, 700, use_gpu=use_gpu)
     app.run()
