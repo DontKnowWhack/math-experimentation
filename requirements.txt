@@ -1,0 +1,6 @@
+# `mandelbrot_app.py` currently uses a `matplotlib` function that will be deprecated in 3.11
+matplotlib>=<3.11
+
+numba
+pillow
+numpy
